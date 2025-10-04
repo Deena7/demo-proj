@@ -36,10 +36,10 @@ pipeline {
                         
                         # Build and run container
                         ssh ${DOCKER_USER}@${DOCKER_HOST} '
-                            docker build -t ${IMAGE_NAME} /home/${DOCKER_USER}/
-                            docker stop ${APP_NAME} || true
-                            docker rm ${APP_NAME} || true
-                            docker run -d --name ${APP_NAME} -p 8080:8080 ${IMAGE_NAME}
+                           sudo docker build -t ${IMAGE_NAME} /home/${DOCKER_USER}/
+                           sudo docker stop ${APP_NAME} || true
+                           sudo docker rm ${APP_NAME} || true
+                           sudo docker run -d --name ${APP_NAME} -p 8080:8080 ${IMAGE_NAME}
                         '
                     """
                 }
