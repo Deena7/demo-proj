@@ -1,7 +1,7 @@
 # Use OpenJDK
 FROM openjdk:11
 WORKDIR /app
-COPY my-app.jar /app/my-app.jar
+COPY my-app-1.0-SNAPSHOT-shaded.jar /app/my-app.jar
 EXPOSE 8080
 CMD ["java", "-jar", "my-app.jar"]
 
