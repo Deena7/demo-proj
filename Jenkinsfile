@@ -7,7 +7,7 @@ pipeline {
         DOCKER_HOST = "18.142.185.65"
         DOCKER_USER = "ubuntu"   // replace with your Docker server username
         APP_NAME = "my-app"
-        JAR_FILE = "target/my-app.jar"
+        JAR_FILE = "target/my-app-1.0-SNAPSHOT.jar"
         IMAGE_NAME = "my-app-image"
     }
 
