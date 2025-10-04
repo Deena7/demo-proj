@@ -31,9 +31,9 @@ pipeline {
                 sshagent(['docker-server-cred']) {
                     sh """
                         # Copy jar and Dockerfile to server
-                        scp ${JAR_FILE} ${DOCKER_USER}@${DOCKER_HOST}:/home/${DOCKER_USER}/
+                        scp  target/my-app-1.0-SNAPSHOT-shaded.jar ${DOCKER_USER}@${DOCKER_HOST}:/home/${DOCKER_USER}/
                         scp Dockerfile ${DOCKER_USER}@${DOCKER_HOST}:/home/${DOCKER_USER}/
-                        
+
                         # Build and run container
                         ssh ${DOCKER_USER}@${DOCKER_HOST} '
                            sudo docker build -t ${IMAGE_NAME} /home/${DOCKER_USER}/
