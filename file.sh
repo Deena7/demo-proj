@@ -1,172 +1,117 @@
-name: Install SonarQube on Ubuntu
-  hosts: sonarqube
-  become: yes
-  vars:
-    sonar_version: "9.9.3.79811"   # LTS version (you can change if needed)
-    sonar_user: "sonar"
-    sonar_group: "sonar"
-    sonar_install_dir: "/opt/sonarqube"
-    postgres_db: "sonarqube"
-    postgres_user: "sonar"
-    postgres_password: "Admin123"
-    sonar_version: 24.12.0.100206
-    sonar_real_dir: "/opt/sonarqube-24.12.0.100206"
-    sonar_install_dir: "/opt/sonarqube"
+#!/bin/bash
 
-  tasks:
+set -e
 
-    - name: Ensure system is updated
-      apt:
-        update_cache: yes
-        upgrade: yes
+### VARIABLES ###
+SONAR_VERSION="24.12.0.100206"
+SONAR_REAL_DIR="/opt/sonarqube-${SONAR_VERSION}"
+SONAR_INSTALL_DIR="/opt/sonarqube"
 
-    - name: Install required packages
-      apt:
-        name:
-          - openjdk-17-jdk
-          - postgresql
-          - postgresql-contrib
-          - unzip
-          - wget
-        state: present
+SONAR_USER="sonar"
+SONAR_GROUP="sonar"
 
-    - name: Ensure PostgreSQL is running
-      service:
-        name: postgresql
-        state: started
-        enabled: yes
+POSTGRES_DB="sonarqube"
+POSTGRES_USER="sonar"
+POSTGRES_PASSWORD="Admin123"
 
-    - name: Install psycopg2 dependency for Ansible PostgreSQL modules
-      apt:
-        name: python3-psycopg2
-        state: present
-        update_cache: yes
+SONAR_ZIP="sonarqube-${SONAR_VERSION}.zip"
+SONAR_URL="https://binaries.sonarsource.com/Distribution/sonarqube/${SONAR_ZIP}"
 
-    - name: Ensure PostgreSQL user exists
-      become: yes
-      become_user: postgres
-      postgresql_user:
-        name: "{{ postgres_user }}"
-        password: "{{ postgres_password }}"
-        role_attr_flags: CREATEDB
+### CHECK ROOT ###
+if [ "$EUID" -ne 0 ]; then
+  echo "❌ Please run as root or with sudo"
+  exit 1
+fi
 
-    - name: Ensure PostgreSQL database exists
-      become: yes
-      become_user: postgres
-      postgresql_db:
-        name: "{{ postgres_db }}"
-        owner: "{{ postgres_user }}"
+echo "🚀 Starting SonarQube installation..."
 
-    - name: Create sonar group
-      group:
-        name: "{{ sonar_group }}"
-        state: present
+### UPDATE SYSTEM ###
+apt update -y && apt upgrade -y
 
-    - name: Create sonar user
-      user:
-        name: "{{ sonar_user }}"
-        group: "{{ sonar_group }}"
-        create_home: yes
-        shell: /bin/bash
+### INSTALL REQUIRED PACKAGES ###
+apt install -y \
+  openjdk-17-jdk \
+  postgresql \
+  postgresql-contrib \
+  unzip \
+  wget \
+  python3-psycopg2
 
-    - name: Download SonarQube
-      get_url:
-        url: "https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-24.12.0.100206.zip"
-        dest: "/tmp/sonarqube.zip"
-        mode: '0644'
+### START POSTGRESQL ###
+systemctl enable postgresql
+systemctl start postgresql
 
-    - name: Ensure SonarQube is extracted
-      unarchive:
-        src: "/tmp/sonarqube.zip"
-        dest: /opt/
-        remote_src: yes
-        creates: "/opt/sonarqube-24.12.0.100206"
+### CREATE POSTGRES USER & DB ###
+sudo -u postgres psql <<EOF
+DO
+\$do\$
+BEGIN
+   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${POSTGRES_USER}') THEN
+      CREATE ROLE ${POSTGRES_USER} LOGIN PASSWORD '${POSTGRES_PASSWORD}';
+   END IF;
+END
+\$do\$;
 
-    - name: Find extracted SonarQube directory
-      find:
-        paths: /opt
-        patterns: "sonarqube-*"
-        file_type: directory
-      register: found_sonarqube
+CREATE DATABASE ${POSTGRES_DB} OWNER ${POSTGRES_USER};
+EOF
 
-    - name: Set fact for SonarQube directory
-      set_fact:
-        sonar_real_dir: "{{ found_sonarqube.files[0].path | default('/opt/sonarqube-24.12.0.100206') }}"
+### CREATE SONAR USER & GROUP ###
+if ! getent group ${SONAR_GROUP} >/dev/null; then
+  groupadd ${SONAR_GROUP}
+fi
 
-    - name: Create symlink for SonarQube
-      file:
-        src: "{{ sonar_real_dir }}"
-        dest: /opt/sonarqube
-        state: link
-        force: yes
+if ! id ${SONAR_USER} >/dev/null 2>&1; then
+  useradd -m -d /home/${SONAR_USER} -s /bin/bash -g ${SONAR_GROUP} ${SONAR_USER}
+fi
 
-    - name: Create symlink to standard path
-      file:
-        src: "{{ sonar_real_dir }}"
-        dest: "{{ sonar_install_dir }}"
-        state: link
-        force: yes
+### DOWNLOAD SONARQUBE ###
+cd /tmp
+wget -q ${SONAR_URL}
 
-    - name: Change ownership of SonarQube directory
-      file:
-        path: "{{ sonar_real_dir }}"
-        owner: "{{ sonar_user }}"
-        group: "{{ sonar_group }}"
-        recurse: yes
+### EXTRACT SONARQUBE ###
+unzip -o ${SONAR_ZIP} -d /opt/
 
-    - name: Configure SonarQube database settings
-      lineinfile:
-        path: "{{ sonar_install_dir }}/conf/sonar.properties"
-        regexp: '^#?(sonar.jdbc.username|sonar.jdbc.password|sonar.jdbc.url)='
-        line: "{{ item }}"
-      loop:
-        - "sonar.jdbc.username={{ postgres_user }}"
-        - "sonar.jdbc.password={{ postgres_password }}"
-        - "sonar.jdbc.url=jdbc:postgresql://localhost/{{ postgres_db }}"
+### CREATE SYMLINK ###
+ln -sfn ${SONAR_REAL_DIR} ${SONAR_INSTALL_DIR}
 
-    - name: Create systemd service file for SonarQube
-      copy:
-        dest: /etc/systemd/system/sonarqube.service
-        content: |
-          [Unit]
-          Description=SonarQube service
-          After=network.target postgresql.service
+### CHANGE OWNERSHIP ###
+chown -R ${SONAR_USER}:${SONAR_GROUP} ${SONAR_REAL_DIR}
 
-          [Service]
-          Type=forking
+### CONFIGURE SONARQUBE DB ###
+SONAR_PROP="${SONAR_INSTALL_DIR}/conf/sonar.properties"
 
-          ExecStart={{ sonar_install_dir }}/bin/linux-x86-64/sonar.sh start
-          ExecStop={{ sonar_install_dir }}/bin/linux-x86-64/sonar.sh stop
+sed -i "s|^#sonar.jdbc.username=.*|sonar.jdbc.username=${POSTGRES_USER}|" $SONAR_PROP
+sed -i "s|^#sonar.jdbc.password=.*|sonar.jdbc.password=${POSTGRES_PASSWORD}|" $SONAR_PROP
+sed -i "s|^#sonar.jdbc.url=.*|sonar.jdbc.url=jdbc:postgresql://localhost:5432/${POSTGRES_DB}|" $SONAR_PROP
 
-          User={{ sonar_user }}
-          Group={{ sonar_group }}
-          Restart=always
-          LimitNOFILE=65536
-          LimitNPROC=4096
+### CREATE SYSTEMD SERVICE ###
+cat <<EOF >/etc/systemd/system/sonarqube.service
+[Unit]
+Description=SonarQube service
+After=network.target postgresql.service
 
-          [Install]
-          WantedBy=multi-user.target
-        mode: '0644'
+[Service]
+Type=forking
+ExecStart=${SONAR_INSTALL_DIR}/bin/linux-x86-64/sonar.sh start
+ExecStop=${SONAR_INSTALL_DIR}/bin/linux-x86-64/sonar.sh stop
+User=${SONAR_USER}
+Group=${SONAR_GROUP}
+Restart=always
+LimitNOFILE=65536
+LimitNPROC=4096
 
-    - name: Reload systemd daemon
-      command: systemctl daemon-reload
+[Install]
+WantedBy=multi-user.target
+EOF
 
-    - name: Enable SonarQube service
-      service:
-        name: sonarqube
-        enabled: yes
-        state: started
+### START SONARQUBE ###
+systemctl daemon-reload
+systemctl enable sonarqube
+systemctl start sonarqube
 
-#after execution run the below commends from sonarqube
-#sudo nano /opt/sonarqube-24.12.0.100206/conf/sonar.properties  ---> for config changes
-#now make below commends to uncommed
+### STATUS ###
+systemctl status sonarqube --no-pager
 
-#sonar.jdbc.username=sonar
-#sonar.jdbc.password=your_password
-#sonar.jdbc.url=jdbc:postgresql://localhost:5432/sonarqube
-
-#now restart sonarqube
-
-#sudo systemctl restart sonarqube
-#sudo systemctl status sonarqube
-#then install sonar-scanner
+echo "✅ SonarQube installed successfully!"
+echo "🌐 Access: http://<server-ip>:9000"
+echo "🔑 Default login: admin / admin"
